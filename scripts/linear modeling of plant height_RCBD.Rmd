@@ -1,0 +1,237 @@
+---
+title: "LINEAR MODELLING of PLANT HEIGHT IN A RCBD"
+author: "Marnik Vuylsteke"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE)
+
+##include = FALSE means: “run the code, but don’t show anything from this chunk in the final knitted document.”
+##echo = FALSE means: "Hide the code, but show the output in the final knitted document. " 
+##warning = FALSE means: “run the code, but hide all warnings in the final knitted document.”
+
+
+library(tidyverse)  # for data manipulation and visualization
+library(readxl)     # for reading Excel files
+library(ggplot2)   # for data visualization#
+library(emmeans)    # for estimated marginal means
+library(htmlTable)  # for creating HTML tables
+library(multcomp)   # for multiple comparisons
+library(lmerTest)   # for linear mixed models with p-values
+library(lme4)       # for linear mixed models
+
+
+
+```
+```{r loading data + reformatting}
+
+#uploading data
+data <- read_xlsx("./DATA/Field_data_maize.xlsx")
+
+# Creating factors
+#data$Genotype <- as.factor(data$Genotype)
+#data$Block <- as.factor(data$Block)
+#data$Plot <- as.factor(data$Plot)
+
+# turning multiple columns into factors #ctrl+enter to execute line 40
+data <- data %>% 
+  mutate_at(vars(Genotype,Block,Plot),as.factor)
+
+#structure of the data set
+str(data)
+#summary of the data set
+summary(data)
+
+# summary statistics for Plant height
+summary(data$Plant_height)
+```
+
+# {.tabset}
+
+## Fitting a linear model to plant height (at the plant level)
+
+ 
+```{r fitting LM to plant height}
+
+# fitting LM to Plant height
+#block and genotype are fixed effects, plot is not included in the model because we are #analyzing plant level data
+mod1 <- lm(Plant_height ~ Block + Genotype, data = data) 
+
+#summary of mod1
+summary(mod1)
+
+# plotting residuals
+plot(mod1)
+
+#table of fixed effects
+#testing the fixed effects of Block and Genotype on Plant height
+anova1<-anova(mod1)
+anova1
+
+
+# making a nice table with ANOVA results
+Table1<-as_tibble(anova1)%>% 
+  rename ("SS" = "Sum Sq", "MS"="Mean Sq", "F" = "F value", "Pr" = "Pr(>F)")%>%
+  add_column(fixed_effect =rownames(anova1))%>%
+  mutate(SS = round(SS, digits = 3), MS = round(MS, digits = 3), F = round(F,digits = 3),Pr = round(Pr, digits = 3))
+
+htmlTable(Table1, caption = "Table1: ANOVA table for Plant Height (plant level)",rnames = FALSE)
+
+# extracting adjusted means for Genotype and tibble them
+
+emmeans1<-emmeans(mod1,specs = "Genotype")
+#emmeans1
+Table2 <- emmeans1%>%
+  as_tibble()%>% mutate(emmean = round(emmean, digits = 3), SE = round(SE, digits = 3),lower.CL = round(lower.CL,digits = 3), upper.CL = round(upper.CL,digits = 3))
+
+htmlTable(Table2, caption = "Table2: Adjusted genotype means for plant height (plant level)"
+          ,rnames = FALSE
+          )
+
+
+
+# making pairwise comparisons and adding letters to each mean
+#place cursor over cld() and press F1 to see the help file
+comp1 <- cld(object = emmeans1,
+                       adjust = "sidak",
+                       Letters = letters,
+                       alpha = 0.05, sort=FALSE, type = "response")
+
+# turning the pairwise comparisons into a nice table
+Table3 <-as_tibble(comp1) %>% mutate(emmean = round(emmean, digits = 3), SE = round(SE, digits = 3),LCL = round(lower.CL,digits = 3), UCL = round(upper.CL,digits = 3))%>% dplyr::select(Genotype,emmean,SE,.group)
+
+# making Table3 html proof
+htmlTable(Table3, caption = "Table3: Comparison between Genotype means for Plant Height (plant level) at the 5% significance level",
+rnames = FALSE)
+
+
+
+```
+
+## Fitting linear mixed model to plant height (at the plot level)
+
+ 
+```{r fitting LMM to plant height}
+
+# fitting LMM to Plant height
+# plot as random effect, block and genotype as fixed effects
+# plants comimg from single plot are not independent, so we need to include plot as a random effect
+#plant observations are grouped within plots
+#df = nrow(data) - length(unique(data$Block)) - length(unique(data$Genotype)) - 1
+#df for genotype =50-1-(10-1)-(5-1)=36
+mod2 <- lmer(Plant_height ~ Block + Genotype + (1|Plot), data = data)
+
+#summary of mod2
+summary(mod2)
+
+#table of fixed effects
+anova2<-anova(mod2)
+#anova2
+
+# table of variance components
+vcomp2 <- as_tibble(VarCorr(mod2))%>% rename("Source" = "grp", "Var" = "vcov")
+#vcomp2
+
+
+# making a nice table with ANOVA results
+Table4<-as_tibble(anova2)%>% 
+  rename ("SS" = "Sum Sq", "MS"="Mean Sq", "F" = "F value", "Pr" = "Pr(>F)")%>%add_column(fixed_effect =rownames(anova2))%>%
+  mutate(SS = round(SS, digits = 3), MS = round(MS, digits = 3), F = round(F,digits = 3),DenDF = round(DenDF, digits = 0),Pr = round(Pr, digits = 3))
+
+# making Table4 html proof
+htmlTable(Table4, caption = "Table4: ANOVA table for Plant Height (plot level)",
+rnames = FALSE)
+
+# extracting adjusted means for Genotype and tibble them
+
+emmeans2<-emmeans(mod2,specs = "Genotype")  # emmeans as data frame
+Table5 <- emmeans2%>%
+  as_tibble()%>% mutate(emmean = round(emmean, digits = 3), SE = round(SE, digits = 3),df = round(df,digits = 0), lower.CL = round(lower.CL,digits = 3), upper.CL = round(upper.CL,digits = 3))
+
+#making Table5 html proof
+htmlTable(Table5, caption = "Table5: Adjusted genotype means for plant height (plot level)",
+rnames = FALSE)
+
+
+# making pairwise comparisons and adding letters to each mean
+comp2 <- cld(object = emmeans2,
+                       adjust = "sidak",
+                       Letters = letters,
+                       alpha = 0.05, sort=FALSE, type = "response")
+
+# turning the pairwise comparisons into a nice table
+Table6 <-as_tibble(comp2) %>% mutate(emmean = round(emmean, digits = 3), SE = round(SE, digits = 3),lower.CL = round(lower.CL,digits = 3), upper.CL = round(upper.CL,digits = 3))%>% dplyr::select(Genotype,emmean,SE,.group)
+
+# making Table6 html proof
+htmlTable(Table6, caption = "Table6: Comparison between Genotype means for Plant Height (plot level) at the 5% significance level",
+rnames = FALSE)
+
+# bar chart with error bars and letters for significant differences
+
+# version1
+ggplot(Table6, aes(x = Genotype, y = emmean,fill = Genotype)) +
+  geom_bar(stat = "identity", size = 3) +
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2) +
+  geom_text(aes(label = .group), vjust = -1) +
+  labs(title = "Adjusted Genotype Means for Plant Height (Plot Level)",
+       x = "Genotype",
+       y = "Adjusted Mean Plant Height") +
+  theme_minimal()
+
+# version2: with rotated x-axis labels
+ggplot(Table6, aes(x = Genotype, y = emmean,fill = Genotype)) +
+  geom_bar(stat = "identity", size = 3) +
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2) +
+  geom_text(aes(label = .group), vjust = -1) +
+  labs(title = "Adjusted Genotype Means for Plant Height (Plot Level)",
+       x = "Genotype",
+       y = "Adjusted Mean Plant Height") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# version3: with rotated x-axis labels and no legend
+ggplot(Table6, aes(x = Genotype, y = emmean,fill = Genotype)) +
+  geom_bar(stat = "identity", size = 3) +
+  geom_errorbar(aes(ymin = emmean-SE, ymax = emmean+SE), width = 0.2) +
+  geom_text(aes(label = .group), vjust = -1) +
+  labs(title = "Adjusted Genotype Means for Plant Height (Plot Level)",
+       x = "Genotype",
+       y = "Adjusted Mean Plant Height") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+  theme(legend.position = "none")
+
+
+
+
+
+
+```
+
+## HERITABILITY ESTIMATION
+
+```{r HERITABILITY ESTIMATION}
+#install.packages("heritable")
+library(heritable)
+
+## fitting lmm with genotype as random to Plant height
+mod3 <- lmer(Plant_height ~ Block + (1|Genotype) + (1|Plot), data = data)
+
+# table of variance components
+vcomp3 <- as_tibble(VarCorr(mod3))%>% rename("Source" = "grp", "Var" = "vcov")
+vcomp3
+
+
+
+H2_Cullis(mod3, target = "Genotype")
+
+H2_Piepho(mod3, target = "Genotype")
+
+H2_Standard(mod3, target = "Genotype")  # broad sense heritability
+
+```
+
+
+
+# {-}

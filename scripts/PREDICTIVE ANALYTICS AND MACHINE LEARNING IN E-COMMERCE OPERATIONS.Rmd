@@ -1,0 +1,275 @@
+---
+title: "PREDICTIVE ANALYTICS AND MACHINE LEARNING IN E-COMMERCE OPERATIONS"
+author: "Kivumbi Muganga"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 6
+)
+
+##include = FALSE means: “run the code, but don’t show anything from this chunk in the final knitted document.”
+##echo = FALSE means: "Hide the code, but show the output in the final knitted document. " 
+##warning = FALSE means: “run the code, but hide all warnings in the final knitted document.”
+
+
+
+#install.packages("tidyverse")
+#install.packages("caret")
+#install.packages("pROC")
+#install.packages("randomForest")
+#install.packages("gbm")
+
+
+# Load required libraries
+library(tidyverse)
+library(caret)
+library(pROC)
+library(randomForest)
+library(gbm)
+
+# Custom colour palette
+custom_palette <- c(
+  "Logistic Regression" = "#1f77b4",
+  "Random Forest"       = "#ff7f0e",
+  "Gradient Boosting"   = "#9467bd"
+)
+
+# Set seed for reproducibility
+set.seed(42)
+```
+
+1. Introduction
+This document presents a comparative evaluation of three machine learning models — Logistic Regression, Random Forest, and Gradient Boosting — for predicting online shopper purchasing intention. The analysis uses the Online Shoppers Purchasing Intention dataset and focuses on model discrimination (ROC-AUC), classification performance, and practical implications for e-commerce operations.
+
+
+Data Ingestion and Preprocessing
+
+```{r }
+# Load the dataset
+# Make sure the path is correct relative to the location of this .Rmd file
+df <- read.csv("../data/online_shoppers_intention.csv", stringsAsFactors = FALSE)
+
+# Convert target to factor
+df$Revenue <- factor(
+  ifelse(df$Revenue == TRUE, "Purchase", "NoPurchase"),
+  levels = c("NoPurchase", "Purchase")
+)
+
+# Separate target first
+y <- df$Revenue
+X <- df %>% select(-Revenue)
+
+# One-hot encode only the predictors
+dummies <- dummyVars(" ~ .", data = X, fullRank = TRUE)
+X_encoded <- predict(dummies, newdata = X) %>% as.data.frame()
+
+# Combine back
+df_encoded <- cbind(X_encoded, Revenue = y)
+
+
+```
+3. Train / Test Split
+
+```{r }
+# Stratified 70/30 split
+trainIndex <- createDataPartition(df_encoded$Revenue, p = 0.70, list = FALSE)
+train_data <- df_encoded[trainIndex, ]
+test_data  <- df_encoded[-trainIndex, ]
+
+# Caret cross-validation control
+train_control <- trainControl(
+  method          = "cv",
+  number          = 10,
+  classProbs      = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+```
+4. Model Training
+```{r }
+# 1. Logistic Regression
+lr_model <- train(
+  Revenue ~ .,
+  data       = train_data,
+  method     = "glm",
+  family     = "binomial",
+  metric     = "ROC",
+  preProcess = c("center", "scale"),
+  trControl  = train_control
+)
+
+# 2. Random Forest
+rf_model <- train(
+  Revenue ~ .,
+  data      = train_data,
+  method    = "rf",
+  metric    = "ROC",
+  ntree     = 100,
+  trControl = train_control
+)
+
+# 3. Gradient Boosting
+gbm_model <- train(
+  Revenue ~ .,
+  data      = train_data,
+  method    = "gbm",
+  metric    = "ROC",
+  verbose   = FALSE,
+  trControl = train_control
+)
+```
+5. Model Evaluation
+
+5.1 ROC Curves and AUC
+```{r }
+# Extract probabilities for the positive class ("Purchase")
+lr_probs  <- predict(lr_model,  test_data, type = "prob")[, "Purchase"]
+rf_probs  <- predict(rf_model,  test_data, type = "prob")[, "Purchase"]
+gbm_probs <- predict(gbm_model, test_data, type = "prob")[, "Purchase"]
+
+# Generate ROC objects
+lr_roc  <- roc(response = test_data$Revenue, predictor = lr_probs,
+               levels = c("NoPurchase", "Purchase"), direction = "<")
+rf_roc  <- roc(response = test_data$Revenue, predictor = rf_probs,
+               levels = c("NoPurchase", "Purchase"), direction = "<")
+gbm_roc <- roc(response = test_data$Revenue, predictor = gbm_probs,
+               levels = c("NoPurchase", "Purchase"), direction = "<")
+
+# Print AUC values
+cat("ROC-AUC Results\n")
+cat(sprintf("Logistic Regression : %.3f\n", auc(lr_roc)))
+cat(sprintf("Random Forest       : %.3f\n", auc(rf_roc)))
+cat(sprintf("Gradient Boosting   : %.3f\n", auc(gbm_roc)))
+
+```
+```{r }
+
+# Prepare data for plotting
+extract_roc_df <- function(roc_obj, model_name) {
+  data.frame(
+    FPR   = 1 - roc_obj$specificities,
+    TPR   = roc_obj$sensitivities,
+    Model = model_name
+  )
+}
+
+roc_df <- rbind(
+  extract_roc_df(lr_roc,  "Logistic Regression"),
+  extract_roc_df(rf_roc,  "Random Forest"),
+  extract_roc_df(gbm_roc, "Gradient Boosting")
+)
+
+roc_df$Model <- factor(
+  roc_df$Model,
+  levels = c("Logistic Regression", "Random Forest", "Gradient Boosting")
+)
+
+# Create the plot (matching the Python version)
+roc_plot <- ggplot(roc_df, aes(x = FPR, y = TPR, color = Model)) +
+  geom_line(linewidth = 1.1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "gray50", linewidth = 0.8) +
+  scale_color_manual(
+    values = c(
+      "Logistic Regression" = "#1f77b4",
+      "Random Forest"       = "#ff7f0e",
+      "Gradient Boosting"   = "#9467bd"
+    ),
+    labels = c(
+      sprintf("Logistic Regression (AUC = %.3f)", auc(lr_roc)),
+      sprintf("Random Forest (AUC = %.3f)",       auc(rf_roc)),
+      sprintf("Gradient Boosting (AUC = %.3f)",   auc(gbm_roc))
+    )
+  ) +
+  labs(
+    title = "Custom ROC Curve Comparison - E-Commerce Conversion Intent",
+    x     = "False Positive Rate (1 - Specificity)",
+    y     = "True Positive Rate (Sensitivity)",
+    color = NULL
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title        = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.title        = element_text(face = "bold", size = 11),
+    legend.position   = c(0.72, 0.22),
+    legend.background = element_rect(fill = "white", color = "gray70"),
+    legend.key        = element_rect(fill = "white"),
+    panel.grid.major  = element_line(color = "gray90"),
+    panel.grid.minor  = element_blank(),
+    panel.border      = element_rect(color = "black", fill = NA, linewidth = 0.8)
+  )
+
+print(roc_plot)
+
+# Save high-resolution version
+
+ggsave("output/custom_roc_comparison_r.png", plot = roc_plot,
+       width = 9, height = 6, dpi = 300)
+
+```
+5.2 Confusion Matrix and Classification Metrics (Random Forest)
+
+```{r }
+
+# Class predictions
+rf_preds <- predict(rf_model, test_data)
+
+# Detailed metrics
+rf_cm <- confusionMatrix(rf_preds, test_data$Revenue, positive = "Purchase")
+print(rf_cm)
+
+# Visualisation
+cm_df <- as.data.frame(rf_cm$table)
+colnames(cm_df) <- c("Prediction", "Reference", "Freq")
+
+cm_plot <- ggplot(cm_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = Freq), fontface = "bold", size = 6) +
+  scale_fill_gradient(low = "#e8f4f8", high = "#1f77b4") +
+  scale_x_discrete(labels = c("No Purchase", "Purchase")) +
+  scale_y_discrete(labels = c("No Purchase", "Purchase")) +
+  labs(
+    title = "Confusion Matrix: Random Forest Classifier",
+    x     = "Predicted Class",
+    y     = "Actual Class"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 13, hjust = 0.5),
+    axis.title       = element_text(face = "bold", size = 11),
+    legend.position  = "none",
+    panel.border     = element_rect(color = "black", fill = NA, linewidth = 0.8)
+  )
+
+print(cm_plot)
+
+ggsave("output/custom_confusion_matrix_r.png", plot = cm_plot,
+       width = 6, height = 5, dpi = 300)
+
+```
+6. Key Findings
+
+Gradient Boosting achieved the highest discriminative performance (AUC ≈ 0.927), followed by Random Forest (≈ 0.915) and Logistic Regression (≈ 0.891).
+
+Ensemble methods clearly outperform the linear baseline, indicating that purchasing intention is driven by non-linear interactions among behavioural features.
+
+Random Forest shows strong precision on the minority class (Purchase) while maintaining excellent performance on the majority class (No Purchase).
+
+The results support the use of ensemble models for prioritising high-intent sessions in marketing and operational decision-making.
+
+
+
+# {-}
+
